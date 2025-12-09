@@ -9,20 +9,36 @@ verbose_logging=false
 title=
 vid=
 fps="30"
-width=
+res=
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [-t title] [-i input] [-f fps] [-u] [-v] [-h]
-  -t TITLE    Set the title (required)
-  -i INPUT    Input file/path (required)
-  -f FPS      Framerate (defaults to 30)
-  -u          Unpatch two-step (not for use with other flags)
+Usage: $(basename "$0") [-t title] [-i input] [-f fps] [-r w:h] [-u] [-v] [-h]
+  -t TITLE    Set the title
+  -i INPUT    Input file/path
+  -f FPS      Framerate (defaults to 30; 30 will unpatch to stock two-step)
+  -r W:H      Set resolution (maintains aspect ratio; covers by default) 
+  -u          Unpatch two-step immediately (not for use with other flags)
   -v          Verbose
   -h          Show help
+
+Notes:
+- 'makepkg' must run as a non-root user. Invoke command via 'sudo' so builds run as SUDO_USER and only system changes use root.
 Examples:
-  $(basename "$0") -t "My Bootsplash" -i input.mp4
+  sudo $(basename "$0") -t "My Bootsplash" -i input.mp4
+  sudo $(basename "$0") -t "My Bootsplash" -i input.mp4 -f 60 -r 1920:1080
+  sudo $(basename "$0") -t "My Bootsplash" -i input.mp4 -f 30   # unpatch to stock
 EOF
+}
+
+require_sudo_user() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    if [[ -z "${SUDO_USER:-}" ]]; then
+      echo "This script should be invoked via sudo so that makepkg can run as a non-root user." 
+      echo "Try: sudo $0 [options]" 
+      exit 1
+    fi
+  fi
 }
 
 unpatch() {
@@ -30,18 +46,20 @@ unpatch() {
     mv "$UNPATCHED_PATH" "/usr/lib/plymouth/two-step.so"
     echo "Unpatched successfully"
   else
-    echo "Patch not found"
+    echo "Patch not found (no backup at $UNPATCHED_PATH)"
   fi
 }
 
-while getopts "tifuvh" opt; do
+while getopts "t:i:f:r:uvh" opt; do
   case "$opt" in 
-    t) title=$optarg ;;
-    i) vid=$optarg ;;
-    f) fps=$optarg ;;
-    u) unpatch; exit 0 ;;
+    t) title="$OPTARG" ;;
+    i) vid="$OPTARG" ;;
+    f) fps="$OPTARG" ;;
+    r) res="$OPTARG" ;;
+    u) unpatch; sudo mkinitcpio -P; exit 0 ;;
     v) verbose_logging=true ;;
     h) usage; exit 0 ;;
+    *) usage; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -51,11 +69,22 @@ if [[ -z "$title" || -z "$vid" ]]; then
   exit 1
 fi
 
-if !$verbose_logging; then
+if [[ -d "/usr/share/plymouth/themes/$title" ]]; then
+  echo "The theme ${title} already exists. Overwrite?"
+  select strict in "Yes" "No"; do
+    relaxed=${strict:-$REPLY}
+    case $relaxed in
+        Yes | yes | y ) sudo rm -r "/usr/share/plymouth/themes/$title"; break;;
+        No  | no  | n ) exit 1 ;;
+    esac
+  done
+fi
+
+require_sudo_user
+
+if ! $verbose_logging; then
   exec 3>&1 4>&2
-
   exec >/dev/null 2>&1
-
   log() { echo "$@" >&3; }
   err() { echo "$@" >&4; }
 else
@@ -63,42 +92,42 @@ else
   err() { echo "$@" >&2; }
 fi
 
-if [[ "$fps" != "30" ]]; then
-  log "Patching two-step..."
-  # the directory of the script
+if [[ "$fps" == "30" ]]; then
+  log "FPS is 30 (default). Restoring stock two-step if patched..."
+  unpatch
+else
+  log "Patching two-step to ${fps} fps..."
+
   DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-  # the temp directory used, within $DIR
-  # omit the -p parameter to create a temporal directory in the default location
-  WORK_DIR=`mktemp -d`
-
-  # check if tmp dir was created
-  if [[ ! "$WORK_DIR" || ! -d "$WORK_DIR" ]]; then
+  WORK_DIR="$(sudo -u "$SUDO_USER" mktemp -d)"
+  if [[ -z "$WORK_DIR" || ! -d "$WORK_DIR" ]]; then
     err "Could not create temp dir"
     exit 1
   fi
 
-  # deletes the temp directory
-  function cleanup {
+  cleanup() {
     rm -rf "$WORK_DIR"
     log "Deleted temp working directory $WORK_DIR"
   }
-
-  # register the cleanup function to be called on the EXIT signal
   trap cleanup EXIT
+  sudo -u "$SUDO_USER" bash -c "
+    set -euo pipefail
+    cd \"$WORK_DIR\"
+    git clone \"$PLYMOUTH_SOURCE\"
+    cd plymouth
+    # NOTE: Fix if Plymouth official removes line
+    sed -i \"s|logo=/usr/share/pixmaps/archlinux-logo.png|logo=/usr/share/pixmaps/archlinux-logo.png  -Dc_args='-DFRAMES_PER_SECOND=${fps}'|\" PKGBUILD
+    makepkg -s --noconfirm
+  "
 
-  cd "$WORK_DIR"
-  git clone $PLYMOUTH_SOURCE
-  cd plymouth
-  sed -i "s|logo=/usr/share/pixmaps/archlinux-logo.png|logo=/usr/share/pixmaps/archlinux-logo.png \\\\\n    -Dc_args='-DFRAMES_PER_SECOND=${fps}'|" PKGBUILD
-  makepkg -s --noconfirm
-  mv /usr/lib/plymouth/two-step.so /usr/lib/plymouth/two-step.so.old
-  cp ./pkg/plymouth/usr/lib/plymouth/two-step.so /usr/lib/plymouth/
+  if [[ -f "$UNPATCHED_PATH" ]]; then
+    rm /usr/lib/plymouth/two-step.so
+  else
+    mv /usr/lib/plymouth/two-step.so "$UNPATCHED_PATH"
+  fi
+  cp "$WORK_DIR/plymouth/pkg/plymouth/usr/lib/plymouth/two-step.so" /usr/lib/plymouth/
   log "Successfully patched two-step to ${fps} fps"
-  cd "$DIR"
-else
-  log "Checking for patch"
-  unpatch
 fi
 
 log "Creating theme dir..."
@@ -107,21 +136,20 @@ mkdir -p "$theme_dir"
 log "Created theme dir"
 
 log "Creating theme files..."
-# Build the video filter string
 vf=""
-if [[ -n "$width" ]]; then
-  vf+="scale=${width}:-2:force_original_aspect_ratio=decrease,"
+if [[ -n "$res" ]]; then
+  vf+="scale=${res}:force_original_aspect_ratio=increase,"
 fi
 vf+="fps=${fps}"
 
-# Extract frames
+# Extract frames into theme dir
 ffmpeg -y -i "$vid" -vf "$vf" "$theme_dir/startup-animation-%04d.png"
 
 # Copy necessary files
-cp "/usr/share/mksplash/*.png" "$theme_dir/" 
+cp /usr/share/mksplash/*.png "$theme_dir/"
 
 # Write the .plymouth theme file
-cat > "$theme_dir/$title.plymouth" <<'EOF'
+bash -c "cat > \"$theme_dir/$title.plymouth\" <<'EOF'
 [Plymouth Theme]
 Name=__TITLE__
 Description=__TITLE__ bootsplash (autogenerated)
@@ -136,12 +164,22 @@ TransitionDuration=0.0
 BackgroundStartColor=0x000000
 BackgroundEndColor=0x000000
 EOF
+"
 
 # Replace placeholders
 sed -i "s|__TITLE__|$title|g; s|__THEME_DIR__|$theme_dir|g" "$theme_dir/$title.plymouth"
 
+bash -c "cat > \"$theme_dir/.mksplash\" <<'EOF'
+[Generation Log]
+Title=__TITLE__
+Framerate=__FPS__
+Created=__DATE__
+"
+
+datenow=$(date)
+sed -i "s|__TITLE__|$title|g; s|__FPS__|$fps|g; s|__DATE__|$datenow|g" "$theme_dir/.mksplash"
+
 log "Theme files created"
 log "Installing and setting theme..."
-# Set as default and rebuild initramfs
 plymouth-set-default-theme -R "$title"
 log "Theme set"

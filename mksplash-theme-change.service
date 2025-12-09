@@ -1,0 +1,20 @@
+[Unit]
+Description=Build and install patched Plymouth two-step for the active GUI user
+After=graphical.target network-online.target
+Wants=graphical.target network-online.target
+
+[Service]
+Type=oneshot
+# Ephemeral workspace at /run/plymouth-two-step
+RuntimeDirectory=plymouth-two-step
+RuntimeDirectoryMode=0700
+WorkingDirectory=%t/plymouth-two-step
+PrivateTmp=true
+PermissionsStartOnly=true
+
+# Build as the detected GUI user, in ephemeral runtime dir
+ExecStart=/usr/bin/bash /usr/bin/patch-helper "%t/plymouth-two-step"
+
+[Install]
+WantedBy=graphical.target
+

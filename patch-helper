@@ -1,0 +1,91 @@
+#!/bin/bash
+set -euo pipefail
+
+sessions="$(/usr/bin/loginctl list-sessions --no-legend || true)"
+
+select_line=""
+while read -r sid uid user seat state _rest; do
+  [[ -z "${sid:-}" ]] && continue
+  type="$(/usr/bin/loginctl show-session "$sid" -p Type --value 2>/dev/null || true)"
+  st="$(/usr/bin/loginctl show-session "$sid" -p State --value 2>/dev/null || true)"
+  if [[ "$st" == "active" && ( "$type" == "wayland" || "$type" == "x11" ) ]]; then
+    if [[ "$seat" == "seat0" ]]; then
+      select_line="$sid $uid $user $seat"
+      break
+    fi
+    [[ -z "$select_line" ]] && select_line="$sid $uid $user $seat"
+  fi
+done <<< "$sessions"
+
+if [[ -z "$select_line" ]]; then
+  echo "No active graphical session detected; skipping." >&2
+  exit 0
+fi
+
+sid="$(awk '{print $1}' <<< "$select_line")"
+uid="$(awk '{print $2}' <<< "$select_line")"
+usr="$(awk '{print $3}' <<< "$select_line")"
+
+if [[ -z "${usr:-}" || "$usr" == "root" ]]; then
+  echo "No suitable non-root GUI user; skipping." >&2
+  exit 0
+fi
+
+WORKING_DIR=$1
+
+setfacl -m "u:${usr}:rwx" "$WORKING_DIR"
+
+PLYMOUTH_SOURCE="https://gitlab.archlinux.org/archlinux/packaging/packages/plymouth.git"
+UNPATCHED_PATH="/usr/lib/plymouth/two-step.so.old"
+
+title=$(awk -F= '$1=="Theme"{print $2}' /etc/plymouth/plymouthd.conf)
+
+unpatch() {
+  if [[ -f "$UNPATCHED_PATH" ]]; then
+    mv "$UNPATCHED_PATH" "/usr/lib/plymouth/two-step.so"
+    echo "Unpatched successfully"
+  else
+    echo "Patch not found (no backup at $UNPATCHED_PATH)"
+  fi
+}
+
+
+if [[ -f "/usr/share/plymouth/themes/$title/.mksplash" ]]; then
+  fps=$(awk -F= '$1=="Framerate"{print $2}' "/usr/share/plymouth/themes/$title/.mksplash")
+else
+  unpatch
+  exit 0
+fi
+
+if [[ "$fps" == "30" ]]; then
+  unpatch
+else
+  echo "Patching two-step to ${fps} fps..."
+
+  DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+  WORK_DIR=$WORKING_DIR
+  if [[ -z "$WORK_DIR" || ! -d "$WORK_DIR" ]]; then
+    echo "Could not create temp dir"
+    exit 1
+  fi
+  sudo -u "$usr" bash -c "
+    set -euo pipefail
+    cd \"$WORK_DIR\"
+    git clone \"$PLYMOUTH_SOURCE\"
+    cd plymouth
+    # NOTE: Fix if Plymouth official removes line
+    sed -i \"s|logo=/usr/share/pixmaps/archlinux-logo.png|logo=/usr/share/pixmaps/archlinux-logo.png  -Dc_args='-DFRAMES_PER_SECOND=${fps}'|\" PKGBUILD
+    makepkg -s --noconfirm
+  "
+
+  if [[ -f "$UNPATCHED_PATH" ]]; then
+    rm /usr/lib/plymouth/two-step.so
+  else
+    mv /usr/lib/plymouth/two-step.so "$UNPATCHED_PATH"
+  fi
+fi
+
+install -m 0755 $WORKING_DIR/plymouth/pkg/plymouth/usr/lib/plymouth/two-step.so /usr/lib/plymouth/two-step.so
+mkinitcpio -P
+

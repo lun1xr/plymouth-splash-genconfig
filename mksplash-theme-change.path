@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch plymouthd.conf for theme changes
+
+[Path]
+PathChanged=/etc/plymouth/plymouthd.conf
+
+[Install]
+WantedBy=multi-user.target
