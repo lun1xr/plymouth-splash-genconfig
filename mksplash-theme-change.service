@@ -11,7 +11,7 @@ RuntimeDirectoryMode=0700
 WorkingDirectory=%t/plymouth-two-step
 PrivateTmp=true
 PermissionsStartOnly=true
-
+ExecStartPre=/usr/bin/wall "mksplash: Patching Plymouth two-step (~25s). Do not reboot."
 # Build as the detected GUI user, in ephemeral runtime dir
 ExecStart=/usr/bin/bash /usr/bin/patch-helper "%t/plymouth-two-step"
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 PLYMOUTH_SOURCE="https://gitlab.archlinux.org/archlinux/packaging/packages/plymouth.git"
 UNPATCHED_PATH="/usr/lib/plymouth/two-step.so.old"
-CONFPATH="/usr/share/mksplash/.conf"
+CONFPATH="/usr/share/ply-mksplash/.conf"
 LASTSET="$(cat $CONFPATH)"
 
 verbose_logging=false
@@ -165,7 +165,7 @@ vf+="fps=${fps}"
 ffmpeg -y -i "$vid" -vf "$vf" "$theme_dir/startup-animation-%04d.png"
 
 # Copy necessary files
-cp /usr/share/mksplash/*.png "$theme_dir/"
+cp /usr/share/ply-mksplash/*.png "$theme_dir/"
 
 # Write the .plymouth theme file
 bash -c "cat > \"$theme_dir/$title.plymouth\" <<'EOF'

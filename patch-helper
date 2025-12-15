@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-CONFPATH="/usr/share/mksplash/.conf"
+CONFPATH="/usr/share/ply-mksplash/.conf"
 LASTSET="$(cat $CONFPATH)"
 
 sessions="$(/usr/bin/loginctl list-sessions --no-legend || true)"
