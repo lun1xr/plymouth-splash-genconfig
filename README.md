@@ -1,5 +1,5 @@
 # plymouth-splash-genpatch
-**Important Note: This repo is the source for the AUR package and is not meant to be run as-is**
+**Important Note: This repo is the source for the [AUR package](https://aur.archlinux.org/packages/ply-mksplash) and is not meant to be run as-is**
 
 A tool for generating plymouth bootsplash animations from video or gif files. Will patch Plymouth's two-step to run at the proper framerate.
 
